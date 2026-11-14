@@ -125,9 +125,10 @@ def audit_closed_worker(output, samples):
                 causal_event_order="PASSED", training_snapshot_audit="PASSED", error_recomputation="PASSED")
 
 
-def audit_closed_models(output, samples, records, tf):
+def audit_closed_models(output, samples, records, tf, *, run_id=None, device_id='0'):
     windows, _ = windows_for_run(dict(case_id="closed-loop", route_id="official-strategy", split="development",
-                                      run_id=output.name), samples, REFERENCE, expected_observations=len(samples))
+                                      run_id=run_id or output.name), samples, REFERENCE,
+                                  expected_observations=len(samples), device_id=device_id)
     require(sorted(p.name for p in (output / "models").iterdir()) == [r["model_version"] for r in records],
             "Unexpected model directory")
     predictions, _ = rows(output / "retry_predictions.csv")

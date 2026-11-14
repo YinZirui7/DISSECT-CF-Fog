@@ -4,10 +4,11 @@ const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
 const main = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
-function boot(mobilityPath, bad = false) {
-  const events = {}, messages = [], counters = { reads: 0, sqlite: 0, intervals: 0 };
+function boot(mobilityPath, bad = false, selection = { canceled: true, filePaths: [] }) {
+  const events = {}, handlers = {}, messages = [], counters = { reads: 0, sqlite: 0, intervals: 0 };
+  let window;
   class Window {
-    constructor() { this.webContents = { once: (n, f) => events[n] = f, send: (n, data) => messages.push([n, data]) }; }
+    constructor() { window = this; this.webContents = { once: (n, f) => events[n] = f, send: (n, data) => messages.push([n, data]) }; }
     loadFile() {} on() {} isDestroyed() { return false; }
     static getAllWindows() { return []; }
   }
@@ -17,14 +18,16 @@ function boot(mobilityPath, bad = false) {
     process: { env: mobilityPath ? { DISSECT_MOBILITY_RUN_DIR: mobilityPath } : {}, platform: 'win32' },
     setInterval: () => counters.intervals++, clearInterval() {},
     require: name => {
-      if (name === 'electron') return { app, BrowserWindow: Window };
+      if (name === 'electron') return { app, BrowserWindow: Window,
+        ipcMain: { handle: (name, fn) => handlers[name] = fn }, dialog: { showOpenDialog: async () => selection } };
       if (name === 'sqlite3') { counters.sqlite++; return { verbose: () => ({}) }; }
-      if (name === './mobility-results') return { readMobilityRun: root => { counters.reads++; assert.equal(root, mobilityPath); if (bad) throw Error('Invalid run'); return { label: 'selected-run' }; } };
+      if (name === './mobility-results') return { readMobilityRun: root => { counters.reads++; assert.ok(root === mobilityPath || selection.filePaths.includes(root)); if (bad) throw Error('Invalid run'); return { label: 'selected-run' }; } };
       return require(name);
     }
   };
   vm.runInNewContext(main, context); events['did-finish-load']();
-  return { messages, counters };
+  return { messages, counters, choose: () => handlers['open-mobility-run']({sender:window.webContents}),
+    untrusted: () => handlers['open-mobility-run']({sender:{}}) };
 }
 test('explicit Mobility run bypasses database discovery and sends that run once', () => {
   const { messages, counters } = boot('D:\\test path\\mobility-42');
@@ -41,4 +44,15 @@ test('invalid Mobility result surfaces an error without loading an old database'
 test('default load prediction mode retains SQLite and its refresh timer', () => {
   const { counters } = boot();
   assert.equal(counters.sqlite, 1); assert.equal(counters.intervals, 1); assert.equal(counters.reads, 0);
+});
+test('folder picker selects a validated run and cancellation keeps the existing run', async () => {
+  const selected=boot('/tmp/old',false,{canceled:false,filePaths:['/tmp/new']});
+  assert.equal(await selected.choose(),true);assert.equal(selected.counters.reads,2);
+  assert.equal(selected.messages.at(-1)[0],'mobility-updated');
+  const canceled=boot('/tmp/old');assert.equal(await canceled.choose(),false);assert.equal(canceled.counters.reads,1);
+});
+test('folder errors are reported and unknown renderer requests cannot open dialogs', async () => {
+  const selected=boot('/tmp/old',true,{canceled:false,filePaths:['/tmp/new']});
+  assert.equal(await selected.choose(),false);assert.equal(selected.messages.at(-1)[0],'data-error');
+  assert.equal(await selected.untrusted(),false);assert.equal(selected.counters.reads,2);
 });

@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const {
   existsSync,
   readdirSync,
@@ -9,7 +9,7 @@ const {
   readFileSync
 } = require('fs');
 const path = require('path');
-const mobilityRunDirectory = process.env.DISSECT_MOBILITY_RUN_DIR?.trim();
+let mobilityRunDirectory = process.env.DISSECT_MOBILITY_RUN_DIR?.trim();
 const sqlite3 = mobilityRunDirectory ? null : require('sqlite3').verbose();
 const { readMobilityRun } = require('./mobility-results');
 
@@ -29,6 +29,27 @@ const configuredDatabasePath =
 const selectedDatabasePath = configuredDatabasePath
   ? path.resolve(configuredDatabasePath)
   : null;
+
+ipcMain.handle('open-mobility-run', async (event) => {
+  if (!win || event.sender !== win.webContents) return false;
+  const selection = await dialog.showOpenDialog(win, {
+    title: 'Open a completed mobility run',
+    defaultPath: mobilityRunDirectory || simulationResultsPath,
+    properties: ['openDirectory']
+  });
+  if (selection.canceled || selection.filePaths.length !== 1) return false;
+  try {
+    const directory = selection.filePaths[0];
+    const run = readMobilityRun(directory);
+    mobilityRunDirectory = directory;
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    win.webContents.send('mobility-updated', run);
+    return true;
+  } catch (error) {
+    win.webContents.send('data-error', 'Mobility: ' + error.message);
+    return false;
+  }
+});
 
 const createWindow = () => {
   win = new BrowserWindow({
@@ -317,6 +338,7 @@ async function connectToDatabase() {
 }
 
 async function fetchAndSendData() {
+  if (mobilityRunDirectory) return;
   if (refreshInProgress) {
     return;
   }
@@ -386,13 +408,13 @@ async function fetchAndSendData() {
       lastSentData = serialized;
 
       if (win && !win.isDestroyed()) {
-        win.webContents.send('data-updated', predictionsForFeature);
+        if (!mobilityRunDirectory) win.webContents.send('data-updated', predictionsForFeature);
       }
     }
   } catch (error) {
     console.error('Database query error:', error.message);
     if (win && !win.isDestroyed()) {
-      win.webContents.send('data-error', error.message);
+      if (!mobilityRunDirectory) win.webContents.send('data-error', error.message);
     }
   } finally {
     refreshInProgress = false;

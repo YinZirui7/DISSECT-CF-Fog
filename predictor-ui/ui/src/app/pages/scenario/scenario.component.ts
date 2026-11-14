@@ -42,6 +42,7 @@ export class ScenarioComponent implements OnInit, OnDestroy {
   stopWatch = new Stopwatch();
 
   mobilityRun?: MobilityRun;
+  openingMobility = false;
   private mobilitySubscription?: Subscription;
   private errorSubscription?: Subscription;
   statusText = '-';
@@ -73,7 +74,7 @@ export class ScenarioComponent implements OnInit, OnDestroy {
     if (this.electron.hasApi()) {
       this.mobilitySubscription = this.electron.mobilityUpdates$?.subscribe(run => {
         this.mobilityRun = run;
-        this.statusText = 'Mobility run complete · shadow forecasts · ' + run.label;
+        this.statusText = 'Mobility run complete · ' + (run.learning ? 'model lifecycle replay · ' : 'baseline replay · ') + run.label;
         this.changeDetectorRef.detectChanges();
       });
       this.errorSubscription = this.electron.errorUpdates$?.subscribe(error => {
@@ -93,6 +94,14 @@ export class ScenarioComponent implements OnInit, OnDestroy {
     if (this.statusTimer !== undefined) {
       clearTimeout(this.statusTimer);
     }
+  }
+
+  async openMobilityResults(): Promise<void> {
+    if (this.openingMobility) return;
+    this.openingMobility = true;
+    try { await this.electron.openMobilityRun(); }
+    catch (error) { this.statusText = 'Could not open mobility results: ' + String(error); }
+    finally { this.openingMobility = false; this.changeDetectorRef.detectChanges(); }
   }
 
   private updatePredictions(data: Map<string, Prediction[]>): void {

@@ -37,7 +37,8 @@ def training_data(request):
     records = []
     for item in windows:
         w = item.window
-        require((w.run_id, w.device_id) == identity and identity[0] and identity[1] == "0", "Mixed training identity")
+        require((w.run_id, w.device_id) == identity and identity[0] and identity[1].isascii()
+                and identity[1].isdigit() and str(int(identity[1])) == identity[1], "Mixed training identity")
         require(w.target_ms == w.origin_ms + 60000 and item.completed_at_sim_ms == w.target_ms
                 and w.target_ms <= request.requested_at_sim_ms, "Unavailable training label")
         require(w.history_time_ms == tuple(range(w.origin_ms - 420000, w.origin_ms + 1, 60000)),

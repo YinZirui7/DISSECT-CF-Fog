@@ -34,4 +34,116 @@ describe('Mobility replay timing', () => {
     c.nextConnection(); expect(c.index).toBe(1); expect(c.observation.current_node).toBe('b');
     c.choose(2); expect(c.final).toBeTrue(); expect(c.observation.time_ms).toBe(200); expect(c.forecast).toBeUndefined();
   });
+  it('switches device trajectory while preserving simulation time and global node load', () => {
+    const first = c.run;
+    const second = {...first, observations: first.observations.map(o => ({...o, device_id:1, longitude:o.longitude + .01}))};
+    c.run = {...first, devices:[{id:0,data:first},{id:1,data:second}]};
+    c.ngOnChanges(); c.choose(1);
+    const frame = c.frame, original = c.trajectory;
+    c.errorVersion='v0001'; c.showTruth=true; c.play();
+    c.selectDevice(1);
+    expect(c.observation.device_id).toBe(1);
+    expect(c.frame).toBe(frame); expect(c.trajectory).not.toBe(original);
+    expect(c.errorVersion).toBe(''); expect(c.showTruth).toBeFalse(); expect(c.timer).toBeUndefined();
+    c.selectDevice(99); expect(c.deviceId).toBe(1);
+  });
+  it('handles staggered startup and keeps a forecast only until its own target time', () => {
+    const first = c.run;
+    const second = {...first, props:{start_latitude_deg:'0',start_longitude_deg:'0'},
+      observations:first.observations.map(o=>({...o,device_id:1,time_ms:o.time_ms+50})),
+      predictions:first.predictions.map(p=>({...p,origin_ms:p.origin_ms+50,target_ms:p.target_ms+50}))};
+    c.run={...first,devices:[{id:0,data:first},{id:1,data:second}]};
+    c.ngOnChanges(); c.selectDevice(1);
+    expect(c.frame.time_ms).toBe(100); expect(c.hasObservation).toBeFalse(); expect(c.shownForecast).toBeUndefined();
+    c.choose(1);
+    expect(c.hasObservation).toBeTrue(); expect(c.observation.time_ms).toBe(150);
+    expect(c.shownForecast?.origin_ms).toBe(150); expect(c.shownForecast?.target_ms).toBe(250);
+    c.choose(2); expect(c.shownForecast).toBeUndefined();
+  });
+});
+
+describe('Mobility replay chart caching', () => {
+  function makeRun(): MobilityRun {
+    const load = (node: string, waiting: number, tasks: number) => ({node,
+      waiting_assignment_bytes: waiting, running_tasks: tasks, offload_event_sequence: 0,
+      completed_tasks: 0, device_upload_completed_bytes_derived: 0,
+      offload_sent_bytes: 0, offload_received_bytes: 0, device_generated_bytes: 0,
+      device_upload_completed_bytes_total: 0});
+    return {
+      label:'cache-test', props:{},
+      nodes:[{name:'a',latitude:0,longitude:0,radius:1000},{name:'b',latitude:0,longitude:.01,radius:1000}],
+      observations:[{device_id:0,time_ms:100,latitude:0,longitude:0,previous_node:'NONE',current_node:'a'},
+        {device_id:0,time_ms:200,latitude:.001,longitude:.002,previous_node:'a',current_node:'a'}],
+      predictions:[], evaluations:[], transfers:[], summary:[],
+      frames:[{time_ms:100,sample_kind:'OBSERVATION',nodes:[load('a',100,1),load('b',0,0)]},
+        {time_ms:200,sample_kind:'OBSERVATION',nodes:[load('a',300,3),load('b',200,2)]},
+        {time_ms:600,sample_kind:'FINAL',nodes:[load('a',0,0),load('b',0,0)]}],
+      learning:{run_id:'test',device_id:0,samples:[],predictions:[],selectedPredictions:[],selectedEvaluations:[],events:[],versions:[],
+        summary:{promotions:0,fallbacks:0,active_lstm:false,selected_matched:0,lstm_selected_origins:0},
+        evaluations:[{model:'LSTM',model_version:'v0001',origin_ms:0,target_ms:100,actual_latitude_deg:0,actual_longitude_deg:0,position_error_m:10},
+          {model:'LSTM',model_version:'v0002',origin_ms:100,target_ms:200,actual_latitude_deg:0,actual_longitude_deg:0,position_error_m:20}]}
+    };
+  }
+  let c: MobilityViewComponent;
+  beforeEach(() => { c = new MobilityViewComponent(); c.run = makeRun(); c.ngOnChanges(); });
+  afterEach(() => c.ngOnDestroy());
+
+  it('preserves exact step geometry, future-free paths and the final settlement gap when seeking backwards', () => {
+    expect(c.maximum('waiting_assignment_bytes')).toBe(300);
+    expect(c.chartPath('a','waiting_assignment_bytes')).toBe('M60,130');
+    c.choose(1);
+    expect(c.chartPath('a','waiting_assignment_bytes')).toBe('M60,130H220V30');
+    c.choose(2);
+    expect(c.chartPath('a','waiting_assignment_bytes')).toBe('M60,130H220V30');
+    expect(c.chartX(c.frame.time_ms)).toBe(860);
+    expect(c.chartY(0,'waiting_assignment_bytes')).toBe(180);
+    c.choose(0);
+    expect(c.chartPath('a','waiting_assignment_bytes')).toBe('M60,130');
+  });
+
+  it('invalidates errors for time, version and device while sharing global load paths', () => {
+    const first = c.run, second = makeRun();
+    second.learning!.evaluations[0].position_error_m = 99;
+    second.frames = first.frames;
+    second.observations = second.observations.map(o => ({...o,device_id:1}));
+    c.run = {...first,devices:[{id:0,data:first},{id:1,data:second}]}; c.ngOnChanges();
+    expect(c.errorMaximum).toBe(10);
+    expect(c.comparisonMetrics[2].count).toBe(1);
+    const loadPath = c.chartPath('a','running_tasks'), oldError = c.errorPath('LSTM');
+    c.selectDevice(1);
+    expect(c.errorMaximum).toBe(100); expect(c.errorPath('LSTM')).not.toBe(oldError);
+    expect(c.chartPath('a','running_tasks')).toBe(loadPath);
+    c.selectDevice(0); c.choose(1);
+    expect(c.errorPath('LSTM').split('M').length - 1).toBe(2); // No line across versions.
+    expect(c.comparisonMetrics[2].mean).toBe(15);
+    c.errorVersion='v0001';
+    expect(c.errorRows.length).toBe(1); expect(c.errorMaximum).toBe(10);
+    c.errorVersion='v0002'; c.choose(0);
+    expect(c.errorRows.length).toBe(0); expect(c.errorPath('LSTM')).toBe('');
+    expect(c.comparisonMetrics[2].mean).toBeNull();
+  });
+
+  it('replaces scales and paths when another run has the same frame count and times', () => {
+    const oldPath = c.chartPath('a','waiting_assignment_bytes');
+    const another = makeRun(); another.frames[1].nodes[0].waiting_assignment_bytes=900;
+    another.learning!.evaluations[0].position_error_m=500;
+    c.run = another; c.ngOnChanges();
+    expect(c.maximum('waiting_assignment_bytes')).toBe(900);
+    expect(c.chartPath('a','waiting_assignment_bytes')).not.toBe(oldPath);
+    expect(c.errorMaximum).toBe(500);
+  });
+
+  it('keeps load-counter reads linear and does not rescan on an unrelated device switch', () => {
+    const run=makeRun(); let reads=0;
+    run.frames=Array.from({length:128},(_,i)=>({time_ms:100+i,sample_kind:'OBSERVATION',
+      nodes:run.frames[0].nodes.map(n=>({...n,get waiting_assignment_bytes(){ reads++; return 100+i; }}))}));
+    const second={...run,observations:run.observations.map(o=>({...o,device_id:1}))};
+    c.run={...run,devices:[{id:0,data:run},{id:1,data:second}]}; c.ngOnChanges(); c.choose(127);
+    for(const node of c.run.nodes) c.chartPath(node.name,'waiting_assignment_bytes');
+    expect(reads).toBeLessThanOrEqual(4*run.frames.length);
+    const afterRender=reads;
+    c.selectDevice(1);
+    for(const node of c.run.nodes) c.chartPath(node.name,'waiting_assignment_bytes');
+    expect(reads).toBe(afterRender);
+  });
 });

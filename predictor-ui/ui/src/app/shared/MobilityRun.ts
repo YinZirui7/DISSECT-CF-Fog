@@ -33,4 +33,36 @@ export interface MobilityRun {
   observations: MobilityObservation[]; predictions: MobilityForecast[];
   evaluations: MobilityEvaluation[]; frames: MobilityFrame[];
   transfers: MobilityTransfer[]; summary: MobilitySummary[];
+  learning?: MobilityLearningRun;
+  devices?: { id: number; data: MobilityRun }[];
+  multi?: { run_id: string; device_count: number; status: string };
+}
+
+export type MobilityMethod = 'HoldPosition' | 'ConstantVelocity' | 'LSTM';
+export interface PositionPrediction {
+  model: MobilityMethod; model_version: string; device_id: number;
+  origin_ms: number; target_ms: number; origin_node: string;
+  predicted_latitude_deg: number; predicted_longitude_deg: number;
+}
+export interface PositionEvaluation {
+  model: MobilityMethod; model_version: string; origin_ms: number; target_ms: number;
+  actual_latitude_deg: number; actual_longitude_deg: number; position_error_m: number;
+}
+export interface MobilityLifecycleEvent {
+  sequence: number; sim_time_ms: number; event: string; model_version?: string;
+  model?: MobilityMethod; state?: string; decision?: string;
+}
+export interface MobilityVersion {
+  model_version: string; training_windows: number; training_cutoff_sim_ms: number;
+  matched_origins: number; selected_origins: number; quality_decision: string;
+  decided_at_sim_ms: number; state: string; training_reason?: string;
+}
+export interface MobilityLearningRun {
+  run_id: string; device_id: number;
+  samples: {time_ms: number; latitude_deg: number; longitude_deg: number}[];
+  predictions: PositionPrediction[]; evaluations: PositionEvaluation[];
+  selectedPredictions: PositionPrediction[]; selectedEvaluations: PositionEvaluation[];
+  events: MobilityLifecycleEvent[]; versions: MobilityVersion[];
+  summary: {promotions: number; fallbacks: number; active_lstm: boolean;
+    selected_matched: number; lstm_selected_origins: number; degradation_retrainings?: number};
 }

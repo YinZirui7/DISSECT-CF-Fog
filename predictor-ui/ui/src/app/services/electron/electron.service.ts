@@ -41,6 +41,10 @@ export class ElectronService {
     }
   }
 
+  async openMobilityRun(): Promise<boolean> {
+    return (window as any)[this.api].openMobilityRun();
+  }
+
   hasApi() {
     return (window as any)[this.api];
   }

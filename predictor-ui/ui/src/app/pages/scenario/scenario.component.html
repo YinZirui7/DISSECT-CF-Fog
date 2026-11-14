@@ -3,6 +3,7 @@
         <div start style="display: flex; gap: 8px; align-items: center; padding-left: 16px;">
             <span class="title">DISSECT-CF-Fog Predictor UI</span>
         </div>
+        <div end style="padding-right: 16px;"><app-button color="normal" [disabled]="openingMobility" (click)="openMobilityResults()">{{ openingMobility ? 'Opening…' : 'Open mobility results' }}</app-button></div>
     </app-toolbar>
 
     <app-mobility-view *ngIf="mobilityRun" [run]="mobilityRun"></app-mobility-view>

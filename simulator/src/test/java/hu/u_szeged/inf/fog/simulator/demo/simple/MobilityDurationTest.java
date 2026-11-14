@@ -62,6 +62,29 @@ class MobilityDurationTest {
     }
 
     @Test
+    void drainBudgetDoesNotChangeObservationWindowAndRoundTrips() throws Exception {
+        for (int drain : new int[] {1, 120, 1440}) {
+            MobilityScenarioConfig original = config("mobility_strategy=random_walk\nduration_minutes=120\ndrain_minutes=" + drain);
+            assertEquals(121, original.observationCount());
+            assertEquals(7_200_000, original.durationMillis());
+            assertEquals(drain * 60_000L, original.drainMillis());
+            assertEquals((120L + drain) * 60_000, original.simulationLimitMillis());
+            original.save(temporary);
+            MobilityScenarioConfig restored = MobilityScenarioConfig.load(temporary.resolve("scenario-effective.properties"));
+            assertEquals(original.metadata(), restored.metadata());
+            assertEquals(original.simulationLimitMillis(), restored.simulationLimitMillis());
+        }
+    }
+
+    @Test
+    void invalidDrainBudgetCannotSilentlyUseDefault() {
+        for (String value : new String[] {"", "0", "-1", "1441", "120.5", "NaN", "999999999999"}) {
+            assertThrows(IllegalArgumentException.class,
+                    () -> config("mobility_strategy=random_walk\ndrain_minutes=" + value), value);
+        }
+    }
+
+    @Test
     void longOfficialRunsHave233ObservationsAndConserveAllGeneratedBytes() throws Exception {
         Path resources = Path.of("src/main/resources/demo").toAbsolutePath();
         if (!Files.isDirectory(resources)) {
@@ -70,7 +93,7 @@ class MobilityDurationTest {
         for (String name : new String[] {"nomadic", "random-walk"}) {
             Path scenario = temporary.resolve(name + ".properties");
             Files.writeString(scenario, Files.readString(resources.resolve("mobility/official-" + name + ".properties"))
-                    + "\nduration_minutes=232\n");
+                    + "\nduration_minutes=232\ndrain_minutes=1440\n");
             Path output = temporary.resolve(name);
             Path log = temporary.resolve(name + ".log");
             String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();

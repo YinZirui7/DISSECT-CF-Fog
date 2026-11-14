@@ -19,10 +19,11 @@ public final class MobilityScenarioConfig {
     private static final String DEFAULT_POINTS = "0,0;1600,0;1600,1200;0,1200;0,0";
     private static final Set<String> KEYS = Set.of("scenario_name", "seed", "mobility_strategy",
             "start_latitude_deg", "start_longitude_deg", "speed_m_s", "waypoints_m", "route_repeats",
-            "speed_min_m_s", "speed_max_m_s", "radius_m", "duration_minutes");
+            "speed_min_m_s", "speed_max_m_s", "radius_m", "duration_minutes", "drain_minutes");
     private final String name;
     private final long seed;
     private final int durationMinutes;
+    private final int drainMinutes;
     private final String strategy;
     private final boolean legacy;
     private final boolean repeats;
@@ -42,6 +43,10 @@ public final class MobilityScenarioConfig {
         durationMinutes = Integer.parseInt(properties.getProperty("duration_minutes", "120").trim());
         if (durationMinutes < 10 || durationMinutes > 1440) {
             throw new IllegalArgumentException("duration_minutes must be an integer between 10 and 1440");
+        }
+        drainMinutes = Integer.parseInt(properties.getProperty("drain_minutes", "120").trim());
+        if (drainMinutes < 1 || drainMinutes > 1440) {
+            throw new IllegalArgumentException("drain_minutes must be an integer between 1 and 1440");
         }
         legacy = !properties.containsKey("mobility_strategy");
         if (legacy) { reject(properties, "start_latitude_deg", "start_longitude_deg", "route_repeats"); }
@@ -177,7 +182,8 @@ public final class MobilityScenarioConfig {
     }
 
     public long durationMillis() { return durationMinutes * 60_000L; }
-    public long simulationLimitMillis() { return (durationMinutes + 120L) * 60_000L; }
+    public long drainMillis() { return drainMinutes * 60_000L; }
+    public long simulationLimitMillis() { return durationMillis() + drainMillis(); }
     public int observationCount() { return durationMinutes + 1; }
 
     public double widthMeters() { return isRandomWalk() ? 2 * radius : extent(0); }
@@ -192,7 +198,8 @@ public final class MobilityScenarioConfig {
 
     /** Reports strategy-specific metadata without inventing a waypoint file or fixed random speed. */
     public String metadata() {
-        String common = "\nduration_minutes=" + durationMinutes + "\nmobility_strategy=" + strategy
+        String common = "\nduration_minutes=" + durationMinutes + "\ndrain_minutes=" + drainMinutes
+                + "\nmobility_strategy=" + strategy
                 + "\nroute_strategy=" + (isRandomWalk() ? "RandomWalkMobilityStrategy" : "NomadicMobilityStrategy")
                 + "\nroute_repeats=" + repeats + "\nstart_latitude_deg=" + latitude
                 + "\nstart_longitude_deg=" + longitude;
@@ -204,7 +211,8 @@ public final class MobilityScenarioConfig {
     /** Saves scene inputs separately from observations; no future random trajectory is generated. */
     public void save(Path directory) throws IOException {
         StringBuilder effective = new StringBuilder("scenario_name=").append(name)
-                .append("\nseed=").append(seed).append("\nduration_minutes=").append(durationMinutes);
+                .append("\nseed=").append(seed).append("\nduration_minutes=").append(durationMinutes)
+                .append("\ndrain_minutes=").append(drainMinutes);
         if (!legacy) {
             effective.append("\nmobility_strategy=").append(strategy)
                     .append("\nstart_latitude_deg=").append(latitude)
